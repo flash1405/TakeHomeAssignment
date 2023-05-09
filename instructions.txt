@@ -1,0 +1,8 @@
+node.js server - 
+ask user to login - in db - give token
+They will ask for a pdf file -
+getUserID from AuthToken
+make a pdf file with some variation - not needed to be unique
+res.sendFile(pdfFile)
+segregating code
+postGress
