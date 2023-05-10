@@ -7,7 +7,8 @@ const flash = require("express-flash");
 const passport = require("passport");
 const pdfConfig = require("./pdfConfig");
 const fs = require("fs");
-const jwt = require("jsonwebtoken");
+const cookieParser = require("cookie-parser");
+const jwtConfig = require("./jwtConfig");
 
 const initializePassport = require("./passportConfig");
 initializePassport(passport);
@@ -28,6 +29,7 @@ app.use(passport.initialize());
 app.use(passport.session());
 app.use(flash());
 app.use(express.json());
+app.use(cookieParser());
 
 // Routes
 // GET
@@ -35,20 +37,36 @@ app.get("/", (req, res) => {
   res.render("index");
 });
 
-app.get("/users/register", checkAuthenticated, (req, res) => {
-  res.render("register");
-});
+app.get(
+  "/users/register",
+  jwtConfig.validateToken,
+  checkAuthenticated,
+  (req, res) => {
+    res.render("register");
+  }
+);
 
-app.get("/users/login", checkAuthenticated, (req, res) => {
-  res.render("login");
-});
+app.get(
+  "/users/login",
+  jwtConfig.validateToken,
+  checkAuthenticated,
+  (req, res) => {
+    res.render("login");
+  }
+);
 
-app.get("/users/dashboard", checkNotAuthenticated, (req, res) => {
-  pdfConfig.createPDF(req.user.id, req.user.name, req.user.email);
-  res.render("dashboard", { user: req.user.name });
-});
+app.get(
+  "/users/dashboard",
+  jwtConfig.validateToken,
+  checkNotAuthenticatedToken,
+  (req, res) => {
+    pdfConfig.createPDF(req.user.id, req.user.name, req.user.email);
+    res.render("dashboard", { user: req.user.name });
+  }
+);
 
 app.get("/users/logout", function (req, res, next) {
+  res.clearCookie("access-token");
   req.logout(function (err) {
     if (err) {
       return next(err);
@@ -58,11 +76,25 @@ app.get("/users/logout", function (req, res, next) {
   });
 });
 
-app.get("/users/pdf", checkNotAuthenticated, async (req, res) => {
-  const filePath = `./pdf/${req.user.id}.pdf`;
-  const fileContent = await fs.promises.readFile(filePath);
-  res.contentType("application/pdf");
-  res.send(fileContent);
+app.get(
+  "/users/pdf",
+  jwtConfig.validateToken,
+  checkNotAuthenticatedToken,
+  async (req, res) => {
+    const filePath = `./pdf/${req.user.id}.pdf`;
+    const fileContent = await fs.promises.readFile(filePath);
+    res.contentType("application/pdf");
+    res.send(fileContent);
+  }
+);
+
+app.get("/users/createCookie", checkNotAuthenticated, (req, res) => {
+  const accessToken = jwtConfig.createTokens(req.user);
+  res.cookie("access-token", accessToken, {
+    maxAge: 60 * 60 * 1000,
+    httpOnly: true,
+  });
+  res.redirect("/users/dashboard");
 });
 
 // POST
@@ -120,24 +152,14 @@ app.post("/users/register", async (req, res) => {
 app.post(
   "/users/login",
   passport.authenticate("local", {
-    successRedirect: "/users/dashboard",
+    successRedirect: "/users/createCookie",
     failureRedirect: "/users/login",
     failureFlash: true,
-  }),
-  (req, res) => {
-    const user = {
-      id: req.user.id,
-      name: req.user.name,
-      email: req.user.email,
-    };
-    const accessToken = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET);
-    res.json({ accessToken: accessToken });
-    console.log(accessToken);
-  }
+  })
 );
 
 function checkAuthenticated(req, res, next) {
-  if (req.isAuthenticated()) {
+  if (req.authenticated) {
     return res.redirect("/users/dashboard");
   }
   next();
@@ -147,6 +169,14 @@ function checkNotAuthenticated(req, res, next) {
   if (req.isAuthenticated()) {
     return next();
   }
+  res.redirect("/users/login");
+}
+
+function checkNotAuthenticatedToken(req, res, next) {
+  if (req.authenticated) {
+    return next();
+  }
+  req.flash("error", "You are not authorized to view this resource");
   res.redirect("/users/login");
 }
 
